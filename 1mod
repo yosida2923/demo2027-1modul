@@ -1,0 +1,362 @@
+HQ-SRV-10.10.100.2/27 = vlan 100
+HQ-CLI-10.10.200.2/28 = vlan 200
+HQ-SW-10.10.30.2/29 = vlan 999
+BR-SRV-10.20.20.2/28 (br-fw 10.20.20.1/28)
+BR-WF-10.20.10.2/30 на верх к BR-RTR-10.20.10.1/30 вниз
+BR-RTR-172.16.2.2/28 
+HQ-RTR-172.16.1.2/28 (vlan 100 – 10.10.100.1/27, vlan 200 – 10.10.200.1/28, vlan 999 – 10.10.30.1/29)
+ISP-172.16.1.1/28 172.16.2.1/28
+1 Модуль
+
+
+ISP
+hostnamectl hostname ISP; exec bash
+(sed -i “s/heat-23/ISP/“ /etc/{hostname,sysconfig/network})
+cd /etc/net/ifaces/ens19
+vim options
+BOOTPROTO=static
+TYPE=eth
+NM_CONTROLLED=no
+DISABLED=no
+CONFIG_WIRELESS=no
+SYSTEMD_BOOTPROTO=static
+CONFIG_IPV4=yes
+SYST	EMD_CONTROLLED=no
+ONBOOT=yes
+CONFIG_IPV6=no
+cp -r ens19 ens20
+cp -r ens19 ens21
+cd ../ens19
+vim options
+BOOTPROTO=dhcp
+TYPE=eth
+NM_CONTROLLED=no
+DISABLED=no
+CONFIG_WIRELESS=no
+SYSTEMD_BOOTPROTO=dhcp4
+CONFIG_IPV4=yes
+SYSTEMD_CONTROLLED=no
+ONBOOT=yes
+CONFIG_IPV6=no
+cd ../ens20
+echo 172.16.1.1/28 > ipv4address
+rm -r options~
+cd ../ens21
+echo 172.16.2.1/28 > ipv4address
+rm -r options~
+cd ../..
+vim /etc/net/sysctl.conf
+service network restart
+ping ya.ru
+apt-get update
+apt-get install iptables -y
+iptables -t nat -A POSTROUTING -s 172.16.1.0/28 -o ens19 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s 172.16.2.0/28 -o ens19 -j MASQUERADE
+iptables-save > /etc/sysconfig/iptables
+cd ..
+vim crontab
+@reboot root service iptables start
+timedatectl set-timezone Europe/Moscow
+
+HQ-RTR
+en
+conf t
+hostname HQ-RTR
+int ISP
+ip address 172.16.1.2/28
+ip nat outside
+exit
+int 100
+ip address 10.10.100.1/27
+ip nat inside
+exit
+int 200
+ip address 10.10.200.1/28
+ip nat inside
+exit
+int 999
+ip address 10.10.30.1/29
+ip nat inside
+exit
+port te0
+service-instance ISP
+encapsulation untagged
+connect ip interface ISP
+exit
+exit
+port te1
+service-instance 100
+encapsulation dot1q 100
+rewrite pop 1
+connect ip interface 100
+exit
+service-instance 200
+encapsulation dot1q 200
+rewrite pop 1
+connect ip interface 200
+exit
+service-instance 999
+encapsulation dot1q 999
+rewrite pop 1
+connect ip interface 999
+exit
+exit
+ip route 0.0.0.0/0 172.16.1.1
+ip name-server 77.88.8.7 (10.10.100.2 после настройки bind)
+ip name-server 77.88.8.3
+ip domain-name au-team.irpo
+ip nat pool INT 10.10.30.1-10.10.200.14
+типо правильно
+ip nat pool INT 10.10.30.0-10.10.30.7,10.10.100.0-10.10.100.31,10.10.200.0-10.10.200.15
+ip nat source dynamic inside-to-outside pool INT overload 172.16.1.2
+int tunnel.1
+ip address 10.10.10.1/30
+ip tunnel 172.16.1.2 172.16.2.2 mode gre
+ip ospf authentication message-digest 
+ip ospf message-digest-key 1 md5 P@ssw0rd
+exit
+router ospf 1
+network 10.10.10.0/30 area 0
+networok 10.10.100.0/27 area 0
+network 10.10.200.0/28 area 0
+network 10.10.30.0/29 area 0
+passive-interface default
+no passive-interface tunnel.1
+exit
+do wr
+ip pool CLI 10.10.200.2-10.10.200.14
+dhcp-server 1
+gateway 10.10.200.1
+dns 77.88.8.7,77.88.8.3 (10.10.100.2 после настройки bind)
+domain-name au-team.irpo
+mask 28
+static ip 10.10.200.2
+gateway 10.10.200.1
+dns 77.88.8.7,77.88.8.3 (10.10.100.2 после настройки bind)
+domain-name au-team.irpo
+mask 28
+chaddr 06:1c:29:f6:ba:db 
+exit
+exit
+int 200
+dhcp-server 1
+exit
+ntp timezone UTC+3
+username net_admin
+password P@ssw0rd
+role admin
+
+BR-RTR
+en
+conf t
+hostname BR-RTR
+int ISP
+ip address 172.16.2.2/28
+ip nat outside
+exit
+int lan
+ip address 10.20.10.1/30
+ip nat inside
+exit
+port te0
+service-instance ISP
+encapsulation untagged
+connect ip interface ISP
+exit
+exit
+port te1
+service-instace lan
+encapsulation untagged
+connect ip interface lan
+exit
+exit
+ip route 0.0.0.0/0 172.16.2.1
+ip name-server 77.88.8.7 (10.10.100.2 после настройки bind)
+ip name-server 77.88.8.3
+ip domain-name au-team.irpo
+ip nat pool INT 10.20.10.1-10.20.20.14
+типо правильно
+ip nat pool INT 10.20.10.0-10.20.10.3,10.20.20.0-10.20.20.15
+ip nat source dynamic inside-to-outside pool INT overload 172.16.2.2
+int tunnel.1
+ip address 10.10.10.2/30
+ip tunnel 172.16.2.2 172.16.1.2 mode gre
+ip ospf authentication message-digest 
+ip ospf message-digest-key 1 md5 P@ssw0rd
+exit
+router ospf 1
+router-id 10.10.10.2
+network 10.10.10.0/30 area 0
+network 10.20.10.0/30 area 0
+passive-interface default
+no passive-interface tunnel.1
+no passive-interface te1 (fw)
+exit
+ntp timezone UTC+3
+username net_admin
+password P@ssw0rd
+role admin
+exit
+do wr
+
+HQ-SW
+hostnamectl hostname HQ-SW.au-team.irpo
+exec bash
+cd /etc/net/ifaces
+cp -r ens19 ens20
+cp -r ens19 ens21
+mkdir mgmt
+cd mgmt
+mcedit options
+```
+BRIDGE=hq-sw
+TYPE=ovsport
+VID=999
+```
+echo 10.10.30.2/29 > ipv4address
+echo default via 10.10.30.1 > ipv4route
+echo nameserver 77.88.8.7 77.88.8.3 > resolv.conf 
+echo nameserver 10.10.100.2 > resolv.conf
+echo search au-team.irpo
+
+cd ../..
+vim /etc/net/sysctl.conf
+systemctl restart network
+systemctl enable --now openvswitch.service
+ovs-vsctl add-br hq-sw
+ovs-vsctl add-port hq-sw ens19 trunk=100,200,999
+ovs-vsctl add-port hq-sw ens20 tag=100
+ovs-vsctl add-port hq-sw ens21 tag=200
+systemctl restart network
+systemctl restart openvswitch.service
+ovs-vsctl show
+```
+	Bridge hq-sw
+		Port ens21
+			tag: 200
+			interface ens21
+		Port mgmt
+			tag 999
+			interface mgmt
+				type: internal
+		Port ens19
+			trunk: [100, 200, 999]
+			interface ens19
+		Port ens20
+			tag: 100
+			interface ens20
+		Port hq-sw
+			interface hq-sw
+				type: internal
+	ovs_version: «2.17.11»
+```
+timedatectl set-timezone Europe/Moscow
+
+
+HQ-SRV
+hostnamectl hostname hq-srv.au-team.irpo
+exec bash
+cd /etc/net/ifaces/ens19
+echo 10.10.100.2/27 > ipv4address
+echo default via 10.10.100.1 > ipv4route
+echo nameserver 77.88.8.7 77.88.8.3 > resolv.conf 
+
+systemctl restart network
+timedatectl set-timezone Europe/Moscow
+useradd sshuser -u 2027 -m -s /bin/bash 
+passwd sshuser
+vim /etc/sudoers
+раскоментировать WHEEL_USERS ALL=(ALL:ALL) NOPASSWD: ALL
+gpasswd –a sshuser wheel
+apt-get update 
+apt-get install -y bind
+apt-get install -y bind-utils
+cd /etc/bind
+редачим
+mcedit options.conf 
+отредактировать НЕ ВПИСЫВАТЬ
+linsten-on { 10.10.100.2; };
+//listen-on-v6 { ::1; };
+forwarders { 
+77.88.8.3
+77.88.8.7;
+};
+dnssec-validation no
+Все allow вписать any в скобках
+allow-query { any; };
+allow-query-cache { any; };
+allow-recursion { any; };
+отредачить файл
+mcedit 10.10.in-addr.arpa
+@	IN	S0A	au-team.irpo root.au-team.irpo
+Зоны не прописываем они находятся в rfc1912.conf
+chown root:named *.db
+cd /etc/net/ifaces/ens19
+mcedit resolv.conf
+echo nameserver 10.10.100.2 > resolv.conf
+echo search au-team.irpo
+systemctl enable --now bind
+
+vim /etc/openssh/sshd_config
+#Banner /etc/bannerssh
+отредактировать НЕ ВПИСЫВАТЬ
+MaxAuthTries 2
+echo “
+
+Authorized access only
+
+“ > /etc/bannerssh
+systemctl restart sshd
+
+BR-SRV
+hostnamectl hostname BR-SRV.au-team.irpo
+exec bash
+cd /etc/net/ifaces/ens19
+echo 10.20.30.2/28 > ipv4address
+echo default via 10.20.30.1 > ipv4route
+echo nameserver 77.88.8.7 77.88.8.3 > resolv.conf
+echo nameserver 10.10.100.2 > resolv.conf
+echo search au-team.irpo
+
+systemctl restart network
+timedatectl set-timezone Europe/Moscow
+useradd sshuser -u 2027 -m -s /bin/bash 
+passwd sshuser
+vim /etc/sudoers
+раскоментировать WHEEL_USERS ALL=(ALL:ALL) NOPASSWD: ALL
+gpasswd –a sshuser wheel
+vim /etc/openssh/sshd_config
+#Banner /etc/bannerssh
+отредактировать НЕ ВПИСЫВАТЬ
+MaxAuthTries 2
+echo “
+
+Authorized access only
+
+“ > /etc/bannerssh
+systemctl restart sshd 
+
+
+BR-FW
+Включить внешний интерфейс 
+1 или 2 смотреть по mac-addr интерфейс
+Ip add	ress 10.20.20.2/28
+Удаляем все сетевые интерфейсы которое не включены
+Настраиваем  Локальный Ethernet
+FW-NET
+Зона Lan а не wan
+Ip address 10.20.20.2/30
+Шлюз 10.20.20.1
+DNS 77.88.8.3
+DNS 77.88.8.7
+Отключаем фаервол
+Настройка OSPF выбираем 
+FW-NET 
+0
+110
+Настройка DNS 77.88.8.7 77.88.8.3
+На BR-FW OSPF нужно включить только на интерфейсе, который смот-рит в сторону BR-RTR. На остальных интерфейсах firewall OSPF не включается.
+
+Снизу будет консоль поменять имя
+hostnamectl hostname BR-FW.au-team.irpo
+exec bash
